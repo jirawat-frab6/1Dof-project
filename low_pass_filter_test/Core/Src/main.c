@@ -75,7 +75,7 @@ uint64_t time_stamp = 0;
 LowPass lowpass_filters[10] = {0};
 double Wc_arr[15] = {0.00001,0.00002,0.00003,0.00004,0.00005,0.00006,0.00007,0.00008,0.00009,0.0001} ;
 double lowpass_output[15] = {0};
-double kalman_output = 0;
+
 
 /* USER CODE END PV */
 
@@ -93,7 +93,6 @@ uint64_t micros();
 int unwraping_update();
 double velocity_update(int cur_pos);
 double low_pass_process(LowPass *lowpass,double input);
-double kalman_filter_update(double measure);
 
 
 /* USER CODE END PFP */
@@ -175,11 +174,12 @@ int main(void)
 			  lowpass_output[i] = low_pass_process(&lowpass_filters[i], encoder_velocity);
 		  }
 
+		  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,10000);
+		  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
 
 
 	  }
 
-	  kalman_output = kalman_filter_update(encoder_velocity);
 
 
 
@@ -509,21 +509,6 @@ double low_pass_process(LowPass *lowpass,double input){
 	lowpass->pre_output = output;
 
 	return output;
-}
-
-static double EST = 0;
-static double E_est = 0.000002;
-static double E_mea = 0.000001;
-
-double kalman_filter_update(double measure){
-
-	double KG = E_est/(E_est + E_mea);
-
-	EST = EST + KG*(measure - EST);
-
-	E_est = (1-KG)*(E_est);
-
-	return EST;
 }
 
 
