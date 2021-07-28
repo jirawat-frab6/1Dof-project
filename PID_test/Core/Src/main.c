@@ -40,7 +40,15 @@ typedef struct{
 
 } LowPass;
 
+typedef struct{
 
+	double kp,ki,kd;
+	double tau;		// derivative low-pass filter time constant
+	double max,min;	// output limit
+	double dt;		// sample time
+	double integral,pre_error,diff,pre_mea;
+
+} PID;
 
 
 
@@ -68,14 +76,21 @@ uint64_t _micro = 0;
 
 
 int encoder_value = 0;
-double encoder_velocity = 0;
-uint64_t time_stamp = 0;
+double encoder_velocity = 0,encoder_velocity_rpm = 0;
+uint64_t time_stamp = 0,time_stamp2 = 0;
 
 
 LowPass lowpass_filters[10] = {0};
 double Wc_arr[15] = {0.00001,0.00002,0.00003,0.00004,0.00005,0.00006,0.00007,0.00008,0.00009,0.0001} ;
 double lowpass_output[15] = {0};
 double kalman_output = 0;
+
+PID pids[2] = {0};
+double pid_pwm_output = 0,setpoint = 0;
+
+double paths[1000] = {0};
+int paths_ind = 0,path_n_cnt = 0;
+
 
 /* USER CODE END PV */
 
@@ -93,7 +108,10 @@ uint64_t micros();
 int unwraping_update();
 double velocity_update(int cur_pos);
 double low_pass_process(LowPass *lowpass,double input);
-double kalman_filter_update(double measure);
+double kalman_filter_update(double U);
+double pid_update(PID *pid,double setpoint,double mea);
+double ppms_to_rpm(double input);
+void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt);
 
 
 /* USER CODE END PFP */
@@ -142,7 +160,8 @@ int main(void)
 
   // start PWM
   HAL_TIM_Base_Start(&htim3);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_ALL);
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
 
   // start QEI
@@ -154,8 +173,18 @@ int main(void)
 	  lowpass_filters[i].Wc = Wc_arr[i];
   }
 
+  //init pid
+  pids[0].dt = pids[1].dt = 0.02;
+  pids[0].min = pids[1].min = -10000;
+  pids[0].max = pids[1].max = 10000;
+  pids[0].tau = pids[1].tau = 0.02;
+
+  pids[0].kp = 500;
+  pids[0].ki = 600;
+  pids[0].kd = 10;
 
 
+  targectory_cal(paths, &path_n_cnt, 0, 10, 0.02);
 
   /* USER CODE END 2 */
 
@@ -163,9 +192,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,500);
+	  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
 
 	  encoder_value = unwraping_update();
 
+	  // read encoder with low-pass
 	  if(micros() - time_stamp > 1000){ // 1kHz
 		  time_stamp = micros();
 
@@ -175,12 +207,32 @@ int main(void)
 			  lowpass_output[i] = low_pass_process(&lowpass_filters[i], encoder_velocity);
 		  }
 
-
-
+		  encoder_velocity_rpm = ppms_to_rpm(lowpass_output[1]);
+		  //kalman_output = kalman_filter_update(encoder_velocity*300);
 	  }
+	  /*
+	  //pid control , system dead-time = 0.16 sec = 6.25 Hz 165000
+	  if(micros() - time_stamp2 > 20000){ // 6.06Hz
+	  		  time_stamp2 = micros();
 
-	  kalman_output = kalman_filter_update(encoder_velocity);
 
+	  		  setpoint = paths_ind < path_n_cnt ? paths[paths_ind++]/6:0;
+	  		  pid_pwm_output = pid_update(&pids[0], setpoint, encoder_velocity_rpm);
+
+
+	  		  if(pid_pwm_output > 0){
+	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,pid_pwm_output);
+	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
+	  		  }
+	  		  else{
+	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,0);
+	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,-pid_pwm_output);
+	  		  }
+
+
+	  	  }
+
+		*/
 
 
     /* USER CODE END WHILE */
@@ -496,6 +548,10 @@ double velocity_update(int cur_pos){
 
 }
 
+double ppms_to_rpm(double input){
+	return input*60e6/(enc_cnt);
+}
+
 double low_pass_process(LowPass *lowpass,double input){
 
 	double cur_time = micros();
@@ -511,20 +567,132 @@ double low_pass_process(LowPass *lowpass,double input){
 	return output;
 }
 
-static double EST = 0;
-static double E_est = 0.000002;
-static double E_mea = 0.000001;
+static double R = 40; //noise covariance
+static double H = 1; //measurement map scalar
+static double Q = 10; //initial estimate covariance
+static double P = 0 ; //initial error covariance
+static double U_hat = 0; //initial estimate state
+static double K = 0; //initial Kalman gain
 
-double kalman_filter_update(double measure){
+double kalman_filter_update(double U){
+	//being
+	K = P*H/(H*P*H+R); //updata kalman gain
+	U_hat = U_hat + (U-H*U_hat); //update estimated
 
-	double KG = E_est/(E_est + E_mea);
+	//update error covariance
+	P = (1-K*H)*P+Q;
 
-	EST = EST + KG*(measure - EST);
-
-	E_est = (1-KG)*(E_est);
-
-	return EST;
+	return U_hat;
 }
+
+double pid_update(PID *pid,double setpoint,double mea){
+
+	//Error
+	double error = setpoint - mea;
+
+	//Proportional
+	double proportional = pid->kp * error;
+
+	//Integral
+	pid->integral = pid->integral + 0.5f * pid->ki * pid->dt * (error + pid->pre_error);
+
+	//calculate integral anti wind up
+	double max_i,min_i;
+
+	max_i = pid->max > proportional ? pid->max - proportional : 0;
+	min_i = pid->min < proportional ? pid->min - proportional : 0;
+
+
+	//integral clamp
+	if(pid->integral > max_i){
+		pid->integral = max_i;
+	}
+	else if(pid->integral < min_i){
+		pid->integral = min_i;
+	}
+
+	//Derivative
+	pid->diff = -(2.0f * pid->kd * (mea - pid->pre_mea) + (2.0f * pid->tau - pid->dt) * pid->diff) / (2.0f * pid->tau + pid->dt);
+
+	double output = proportional + pid->integral + pid->diff;
+
+	if(output > pid->max){
+		output = pid->max;
+	}
+	else if(output < pid->min){
+		output = pid->min;
+	}
+
+	pid->pre_error = error;
+	pid->pre_mea = mea;
+
+	return output;
+
+}
+
+
+void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt){
+    double v_max = 10*6;            // degree per sec
+    double a_max = 0.5 * 57.296;    // degree per sec^2
+
+    int dis = (stop_pos - start_pos +360)%360;
+    int inverse = 0;
+    if ((start_pos - stop_pos +360)%360 < dis){
+        inverse = 1;
+        dis = (start_pos - stop_pos +360)%360;
+    }
+    start_pos = 0;
+    stop_pos = dis;
+
+    if(dis < (v_max*v_max)/a_max){
+        double ta = sqrt(dis/a_max);
+        double T = ta*2;
+        double tf = T;
+        double t = 0;
+        *n = (int)(T/dt);
+        for(int i = 0;i <*n ;i++){
+            if(t <= ta){
+                datas[i] = a_max*t;
+            }
+            else{
+                datas[i] = a_max*(tf-t);
+            }
+            t += dt;
+        }
+    }
+    else{
+        double T = (dis*a_max + (v_max*v_max))/(a_max*v_max);
+        double ta = v_max/a_max;
+        double tf = T;
+        double t = 0;
+        *n = (int)(T/dt);
+        for(int i = 0;i < *n;i++){
+            if(t <= ta){
+                datas[i] = a_max*t;
+            }
+            else if(t <= tf-ta){
+                datas[i] = a_max*ta;
+            }
+            else{
+                datas[i] = a_max*(tf-t);
+            }
+            t += dt;
+        }
+    }
+
+    if(inverse){
+        for(int i = 0;i<*n;i++){
+            datas[i] *= -1;
+        }
+    }
+}
+
+
+
+
+
+
+
 
 
 
