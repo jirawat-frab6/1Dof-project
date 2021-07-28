@@ -192,8 +192,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,500);
-	  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
+
 
 	  encoder_value = unwraping_update();
 
@@ -210,7 +209,7 @@ int main(void)
 		  encoder_velocity_rpm = ppms_to_rpm(lowpass_output[1]);
 		  //kalman_output = kalman_filter_update(encoder_velocity*300);
 	  }
-	  /*
+
 	  //pid control , system dead-time = 0.16 sec = 6.25 Hz 165000
 	  if(micros() - time_stamp2 > 20000){ // 6.06Hz
 	  		  time_stamp2 = micros();
@@ -232,7 +231,7 @@ int main(void)
 
 	  	  }
 
-		*/
+
 
 
     /* USER CODE END WHILE */
