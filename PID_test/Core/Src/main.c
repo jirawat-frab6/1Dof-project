@@ -179,12 +179,23 @@ int main(void)
   pids[0].max = pids[1].max = 10000;
   pids[0].tau = pids[1].tau = 0.02;
 
+
+  /*
   pids[0].kp = 500;
   pids[0].ki = 600;
   pids[0].kd = 10;
+   */
 
 
-  targectory_cal(paths, &path_n_cnt, 0, 10, 0.02);
+
+  //PID position control
+  pids[1].kp = 500;
+  pids[1].ki = 1000;
+  pids[1].kd = 1;
+
+
+
+  targectory_cal(paths, &path_n_cnt, 0, 180, 0.02);
 
   /* USER CODE END 2 */
 
@@ -215,8 +226,10 @@ int main(void)
 	  		  time_stamp2 = micros();
 
 
-	  		  setpoint = paths_ind < path_n_cnt ? paths[paths_ind++]/6:0;
-	  		  pid_pwm_output = pid_update(&pids[0], setpoint, encoder_velocity_rpm);
+	  		  //setpoint = paths_ind < path_n_cnt ? paths[paths_ind++]/6:0;
+	  		  //pid_pwm_output = pid_update(&pids[0], setpoint, encoder_velocity_rpm);
+	  		  pid_pwm_output = pid_update(&pids[1], setpoint, (double)encoder_value/(12*64*4-1)*360);
+
 
 
 	  		  if(pid_pwm_output > 0){
@@ -643,40 +656,20 @@ void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt){
     start_pos = 0;
     stop_pos = dis;
 
-    if(dis < (v_max*v_max)/a_max){
-        double ta = sqrt(dis/a_max);
-        double T = ta*2;
-        double tf = T;
-        double t = 0;
-        *n = (int)(T/dt);
-        for(int i = 0;i <*n ;i++){
-            if(t <= ta){
-                datas[i] = a_max*t;
-            }
-            else{
-                datas[i] = a_max*(tf-t);
-            }
-            t += dt;
-        }
-    }
-    else{
-        double T = (dis*a_max + (v_max*v_max))/(a_max*v_max);
-        double ta = v_max/a_max;
-        double tf = T;
-        double t = 0;
-        *n = (int)(T/dt);
-        for(int i = 0;i < *n;i++){
-            if(t <= ta){
-                datas[i] = a_max*t;
-            }
-            else if(t <= tf-ta){
-                datas[i] = a_max*ta;
-            }
-            else{
-                datas[i] = a_max*(tf-t);
-            }
-            t += dt;
-        }
+    double tf = 10;
+    double a0 = 0;
+    double a1 = 0;
+    double a2 = 0;
+    double a3 = 10*((double)dis)/(tf*tf*tf);
+    double a4 = -15*((double)dis)/(tf*tf*tf*tf);
+    double a5 = 6*((double)dis)/(tf*tf*tf*tf*tf);
+
+    *n = (int)(tf/dt);
+
+    double t = 0;
+    for(int i =0;i < *n ; i++){
+        datas[i] = a1 + 2*a2*t + 3*a3*t*t + 4*a4*t*t*t + 5*a5*t*t*t*t;
+        t+=dt;
     }
 
     if(inverse){
