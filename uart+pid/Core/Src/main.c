@@ -79,6 +79,18 @@ typedef enum{
 int inputchar = -1;
 
 
+typedef enum{
+	state_move_idle,
+	state_tar_plan,
+	state_wait_des,
+	state_wait_5sec,
+	state_check_left_stations
+}moving_state;
+
+
+
+
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -106,7 +118,7 @@ uint64_t _micro = 0;
 
 int encoder_value = 0;
 double encoder_velocity = 0,encoder_velocity_rpm = 0;
-uint64_t time_stamp = 0,time_stamp2 = 0;
+uint64_t time_stamp = 0,time_stamp2 = 0,time_stamp_5sec = 0;
 
 
 LowPass lowpass_filters[10] = {0};
@@ -127,6 +139,12 @@ int stations_postion[10] = {0,45,180,35,270,70,150,200,30,300};
 uint8_t mcu_connect = 0,goals[512] = {0},go_now = 0,current_station = 0,enable_gripper = 0,enable_sethome = 0;
 uint16_t n_goal = 0;
 double max_velocity = 0,set_position = 0,current_position = 1.5634;
+
+
+moving_state move_state = state_move_idle;
+
+
+
 
 /* USER CODE END PV */
 
@@ -149,7 +167,9 @@ double kalman_filter_update(double U);
 double pid_update(PID *pid,double setpoint,double mea);
 double ppms_to_rpm(double input);
 void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt);
-
+void encoder_lowpass_update();
+void uart_update();
+void moving_state_update();
 
 
 
@@ -237,11 +257,10 @@ int main(void)
   pids[0].tau = pids[1].tau = 0.02;
 
 
-  /*
   pids[0].kp = 500;
   pids[0].ki = 600;
   pids[0].kd = 10;
-   */
+
 
 
 
@@ -271,61 +290,40 @@ int main(void)
   while (1)
   {
 
+	  moving_state_update();
 
-	  encoder_value = unwraping_update();
+	  encoder_lowpass_update();
 
-	  // read encoder with low-pass
-	  if(micros() - time_stamp > 1000){ // 1kHz
-		  time_stamp = micros();
-
-		  encoder_velocity = velocity_update(encoder_value);
-
-		  for(int i = 0;i < 10;i++){
-			  lowpass_output[i] = low_pass_process(&lowpass_filters[i], encoder_velocity);
-		  }
-
-		  encoder_velocity_rpm = ppms_to_rpm(lowpass_output[1]);
-		  //kalman_output = kalman_filter_update(encoder_velocity*300);
-	  }
 
 	  //pid control , system dead-time = 0.16 sec = 6.25 Hz 165000
 	  if(micros() - time_stamp2 > 20000){ // 6.06Hz
-	  		  time_stamp2 = micros();
+		  time_stamp2 = micros();
 
 
-	  		  //setpoint = paths_ind < path_n_cnt ? paths[paths_ind++]/6:0;
-	  		  //pid_pwm_output = pid_update(&pids[0], setpoint, encoder_velocity_rpm);
+		  setpoint = paths_ind < path_n_cnt ? paths[paths_ind++]/6:0;
+		  pid_pwm_output = pid_update(&pids[0], setpoint, encoder_velocity_rpm);
 
-	  		  if(go_now == 1 && abs((int)(setpoint - (double)encoder_value/(12*64*4-1)*360)) < 3){
-	  			  setpoint = stations_postion[goals[station_ind++]];
-	  			  if(station_ind >= n_goal){go_now = station_ind = 0;}
-	  		  }
+		  /*
+		  if(go_now == 1 && abs((int)(setpoint - (double)encoder_value/(12*64*4-1)*360)) < 3){
+		  	  setpoint = stations_postion[goals[station_ind++]];
+			  if(station_ind >= n_goal){go_now = station_ind = 0;}
+			}
+			pid_pwm_output = pid_update(&pids[1], setpoint, (double)encoder_value/(12*64*4-1)*360);
+		   */
 
 
-	  		  pid_pwm_output = pid_update(&pids[1], setpoint, (double)encoder_value/(12*64*4-1)*360);
-
-
-
-	  		  if(pid_pwm_output > 0){
-	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,pid_pwm_output);
-	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
-	  		  }
-	  		  else{
-	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,0);
-	  			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,-pid_pwm_output);
-	  		  }
+		  if(pid_pwm_output > 0){
+			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,pid_pwm_output);
+			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
+		  }
+		  else{
+			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,0);
+			  __HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,-pid_pwm_output);
+		  }
 	  }
 
 
-	  //Uart protocol
-	  int16_t inputChar = UARTReadChar(&UART2);
-	  if(inputChar != -1){
-		  /*char temp[32];
-	  	  sprintf(temp, "%d", inputChar);
-	  	  UARTTxWrite(&UART2, (uint8_t*) temp, strlen(temp));*/
-		  uart_protocal(inputChar, &UART2);
-	  }
-	  UARTTxDumpBuffer(&UART2);
+	  uart_update();
 
 
 
@@ -735,6 +733,7 @@ double pid_update(PID *pid,double setpoint,double mea){
 
 
 void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt){
+
     double v_max = 10*6;            // degree per sec
     double a_max = 0.5 * 57.296;    // degree per sec^2
 
@@ -747,7 +746,7 @@ void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt){
     start_pos = 0;
     stop_pos = dis;
 
-    double tf = 10;
+    double tf = 5;
     double a0 = 0;
     double a1 = 0;
     double a2 = 0;
@@ -768,6 +767,7 @@ void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt){
             datas[i] *= -1;
         }
     }
+
 }
 
 
@@ -1072,6 +1072,55 @@ void uart_protocal(int16_t input,UARTStucrture *uart){
 	}
 
 }
+
+
+void encoder_lowpass_update(){
+
+	 encoder_value = unwraping_update();
+
+	  // read encoder with low-pass
+	  if(micros() - time_stamp > 1000){ // 1kHz
+		  time_stamp = micros();
+
+		  encoder_velocity = velocity_update(encoder_value);
+
+		  for(int i = 0;i < 10;i++){
+			  lowpass_output[i] = low_pass_process(&lowpass_filters[i], encoder_velocity);
+		  }
+
+		  encoder_velocity_rpm = ppms_to_rpm(lowpass_output[1]);
+		  //kalman_output = kalman_filter_update(encoder_velocity*300);
+	  }
+
+}
+
+
+void uart_update(){
+	//Uart protocol
+	int16_t inputChar = UARTReadChar(&UART2);
+	if(inputChar != -1){
+	  /*char temp[32];
+	  sprintf(temp, "%d", inputChar);
+	  UARTTxWrite(&UART2, (uint8_t*) temp, strlen(temp));*/
+	  uart_protocal(inputChar, &UART2);
+	}
+	UARTTxDumpBuffer(&UART2);
+}
+
+
+void moving_state_update(){
+
+	switch (move_state) {
+		case state_move_idle:{if(go_now){move_state = state_tar_plan;} break;}
+		case state_tar_plan:{ targectory_cal(paths, &path_n_cnt, (double)(TIM1->CNT)/(12*64*4 -1)*360,stations_postion[goals[station_ind++]] , 0.02); paths_ind = 0; move_state = state_wait_des; break;}
+		case state_wait_des:{if(paths_ind >= path_n_cnt){time_stamp_5sec = micros(); move_state = state_wait_5sec;} break;}
+		case state_wait_5sec:{if(micros() - time_stamp_5sec >= 5e6){move_state = state_check_left_stations;} break;}
+		case state_check_left_stations:{if(station_ind >= n_goal){go_now = station_ind = 0;/*add send ack2 here*/} move_state = state_move_idle; break;}
+		default:break;
+	}
+
+}
+
 
 
 /* USER CODE END 4 */
