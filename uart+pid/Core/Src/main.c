@@ -73,7 +73,8 @@ typedef enum{
 	state_data_frame,
 	state_check_sum,
 	state_wait_for_ack1_1,
-	state_wait_for_ack1_2
+	state_wait_for_ack1_2,
+	state_send_ack2
 }uart_state;
 
 int inputchar = -1;
@@ -103,6 +104,8 @@ typedef enum{
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim5;
@@ -136,7 +139,7 @@ int paths_ind = 0,path_n_cnt = 0;
 
 int station_ind = 0;
 int stations_postion[10] = {0,45,180,35,270,70,150,200,30,300};
-uint8_t mcu_connect = 0,goals[512] = {0},go_now = 0,current_station = 0,enable_gripper = 0,enable_sethome = 0;
+uint8_t mcu_connect = 0,goals[512] = {0},go_now = 0,current_station = 0,enable_endeffector = 0,enable_sethome = 0;
 uint16_t n_goal = 0;
 double max_velocity = 0,set_position = 0,current_position = 1.5634;
 
@@ -156,6 +159,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 uint64_t micros();
@@ -170,7 +174,7 @@ void targectory_cal(double *datas,int *n,int start_pos,int stop_pos,double dt);
 void encoder_lowpass_update();
 void uart_update();
 void moving_state_update();
-
+void end_effector_update();
 
 
 
@@ -230,6 +234,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM3_Init();
   MX_TIM5_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
   // start micro
@@ -294,6 +299,7 @@ int main(void)
 
 	  encoder_lowpass_update();
 
+	  end_effector_update();
 
 	  //pid control , system dead-time = 0.16 sec = 6.25 Hz 165000
 	  if(micros() - time_stamp2 > 20000){ // 6.06Hz
@@ -376,6 +382,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -1012,7 +1052,7 @@ void uart_protocal(int16_t input,UARTStucrture *uart){
 						go_now = 1;
 						uint8_t temp[] = {0x58,0b01110101};
 						UARTTxWrite(&UART2, temp, 2);
-						state = state_idle;
+						state = state_send_ack2;
 						break;
 					}
 					case 9:{
@@ -1041,14 +1081,14 @@ void uart_protocal(int16_t input,UARTStucrture *uart){
 						break;
 					}
 					case 12:{
-						enable_gripper = 1;
+						enable_endeffector = 1;
 						uint8_t temp[] = {0x58,0b01110101};
 						UARTTxWrite(&UART2, temp, 2);
 						state = state_idle;
 						break;
 					}
 					case 13:{
-						enable_gripper = 0;
+						enable_endeffector = 0;
 						uint8_t temp[] = {0x58,0b01110101};
 						UARTTxWrite(&UART2, temp, 2);
 						state = state_idle;
@@ -1069,6 +1109,15 @@ void uart_protocal(int16_t input,UARTStucrture *uart){
 			break;
 		case state_wait_for_ack1_1:{if(input == 0x58){state = state_wait_for_ack1_2;}break;}
 		case state_wait_for_ack1_2:{if(input == 0b01110101){state = state_idle;}break;}
+
+		case state_send_ack2:{
+			if(!go_now){
+				uint8_t temp[] = {70,110};
+				UARTTxWrite(&UART2, temp, 2);
+				state = state_idle;
+			}
+			break;
+		}
 	}
 
 }
@@ -1113,13 +1162,25 @@ void moving_state_update(){
 	switch (move_state) {
 		case state_move_idle:{if(go_now){move_state = state_tar_plan;} break;}
 		case state_tar_plan:{ targectory_cal(paths, &path_n_cnt, (double)(TIM1->CNT)/(12*64*4 -1)*360,stations_postion[goals[station_ind++]] , 0.02); paths_ind = 0; move_state = state_wait_des; break;}
-		case state_wait_des:{if(paths_ind >= path_n_cnt){time_stamp_5sec = micros(); move_state = state_wait_5sec;} break;}
+		case state_wait_des:{if(paths_ind >= path_n_cnt){time_stamp_5sec = micros(); enable_endeffector = 1; move_state = state_wait_5sec;} break;}
 		case state_wait_5sec:{if(micros() - time_stamp_5sec >= 5e6){move_state = state_check_left_stations;} break;}
 		case state_check_left_stations:{if(station_ind >= n_goal){go_now = station_ind = 0;/*add send ack2 here*/} move_state = state_move_idle; break;}
 		default:break;
 	}
 
 }
+
+
+#define end_effector_address 0x23
+void end_effector_update(){
+	if(enable_endeffector){
+		uint8_t temp = 0x45;
+		HAL_I2C_Master_Transmit(&hi2c1, end_effector_address << 1 , &temp, 1, 1000);
+	}
+
+}
+
+
 
 
 
