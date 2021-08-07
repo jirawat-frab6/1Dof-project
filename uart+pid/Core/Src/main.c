@@ -74,7 +74,6 @@ typedef enum{
 	state_check_sum,
 	state_wait_for_ack1_1,
 	state_wait_for_ack1_2,
-	state_send_ack2
 }uart_state;
 
 int inputchar = -1;
@@ -1052,7 +1051,7 @@ void uart_protocal(int16_t input,UARTStucrture *uart){
 						go_now = 1;
 						uint8_t temp[] = {0x58,0b01110101};
 						UARTTxWrite(&UART2, temp, 2);
-						state = state_send_ack2;
+						state = state_idle;
 						break;
 					}
 					case 9:{
@@ -1109,15 +1108,6 @@ void uart_protocal(int16_t input,UARTStucrture *uart){
 			break;
 		case state_wait_for_ack1_1:{if(input == 0x58){state = state_wait_for_ack1_2;}break;}
 		case state_wait_for_ack1_2:{if(input == 0b01110101){state = state_idle;}break;}
-
-		case state_send_ack2:{
-			if(!go_now){
-				uint8_t temp[] = {70,110};
-				UARTTxWrite(&UART2, temp, 2);
-				state = state_idle;
-			}
-			break;
-		}
 	}
 
 }
@@ -1164,7 +1154,7 @@ void moving_state_update(){
 		case state_tar_plan:{ targectory_cal(paths, &path_n_cnt, (double)(TIM1->CNT)/(12*64*4 -1)*360,stations_postion[goals[station_ind++]] , 0.02); paths_ind = 0; move_state = state_wait_des; break;}
 		case state_wait_des:{if(paths_ind >= path_n_cnt){time_stamp_5sec = micros(); enable_endeffector = 1; move_state = state_wait_5sec;} break;}
 		case state_wait_5sec:{if(micros() - time_stamp_5sec >= 5e6){move_state = state_check_left_stations;} break;}
-		case state_check_left_stations:{if(station_ind >= n_goal){go_now = station_ind = 0;/*add send ack2 here*/} move_state = state_move_idle; break;}
+		case state_check_left_stations:{if(station_ind >= n_goal){go_now = station_ind = 0;uint8_t temp[] = {70,110}; UARTTxWrite(&UART2, temp, 2); state = state_idle;} move_state = state_move_idle; break;}
 		default:break;
 	}
 
