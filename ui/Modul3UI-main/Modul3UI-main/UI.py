@@ -364,13 +364,14 @@ class Ui_MainWindow(object):
 
     def sendaa(self):
         ap=self.manualaa.text()
-        apb=int(ap).to_bytes(2,'big')
+        apb=int(ap).to_bytes(2,byteorder = 'big')
         abp1=int.from_bytes(apb[:1],'big')
         abp2=int.from_bytes(apb[-1:],'big')
         self.Accel.setText("Angular Position :" + str(ap))
         nocheck=[149,abp1,abp2]
-        print(apb[:1],apb[-1:],apb)
-        ser.write([149,apb[:1],apb[-1:],self.checksum(nocheck)[0]])
+        #print(apb[:1],apb[-1:],apb,int(abp1),int(abp2))
+        #print([149,apb[:1],apb[-1:],self.checksum(nocheck)[0]])
+        ser.write([149,abp1,abp2,self.checksum(nocheck)[0]])
         print(nocheck)
         while(ser.readline()!=b'\x58\x75'):
             pass
@@ -485,22 +486,27 @@ class Ui_MainWindow(object):
 
     def timer_function(self):
         print("1sec")
-        print([153,self.checksum([153])[0]])
+        
+        '''
+        #print([153,self.checksum([153])[0]])
         
             #uncomment these lines when using serial
-        '''
         ser.write([153,self.checksum([153])[0]])
-        while(ser.readline() != bb'\x58\x75'):
-            print('asdfasdfsdsfd')
-            pass
-        currentsta=ser.readline()[1]
+        #while(ser.readline() != b'\x58\x75'):
+            #print('asdfasdfsdsfd')
+            #pass
+        currentsta=ser.readline()[1+2]
+        #print(currentsta)
         ser.write(b'\x58\x75')
         self.label_3.setText("Current Station : "+str(currentsta))
-        ser.write([154,self.checksum([154])[0]])                
-        while(ser.readline() != b'\x58\x75'):
-            pass
-        currentaa=ser.readline()[1:3]
-        ser.write(bb'\x58\x75')  
+        
+        ser.write([154,self.checksum([154])[0]])
+        #while(ser.readline() != b'\x58\x75'):
+            #print('asdfasdfsdsfd2')
+            #pass
+        currentaa=ser.readline()[1+2:3+2]
+        #print(currentaa)
+        ser.write(b'\x58\x75')  
         aaint=int.from_bytes(currentaa,"big")
         self.Accel.setText("Angular Position :" + str(aaint))
         self.arrowpng=QtGui.QPixmap("./arrow.png")
