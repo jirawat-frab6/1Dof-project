@@ -1,4 +1,4 @@
-main.c:128:5:main	48	static
+main.c:128:5:main	56	static
 main.c:261:6:SystemClock_Config	88	static
 main.c:306:13:MX_TIM1_Init	56	static
 main.c:356:13:MX_TIM3_Init	64	static
@@ -7,11 +7,11 @@ main.c:464:13:MX_USART2_UART_Init	8	static
 main.c:497:13:MX_GPIO_Init	48	static
 main.c:532:5:unwraping_update	4	static
 main.c:547:8:velocity_update	32	static
-main.c:563:8:ppms_to_rpm	24	static
+main.c:563:8:ppms_to_rpm	16	static
 main.c:567:8:low_pass_process	64	static
-main.c:589:8:kalman_filter_update	32	static
-main.c:600:8:pid_update	104	static
+main.c:589:8:kalman_filter_update	24	static
+main.c:600:8:pid_update	96	static
 main.c:646:6:targectory_cal	152	static
 main.c:691:10:micros	12	static
-main.c:696:6:HAL_TIM_PeriodElapsedCallback	16	static
+main.c:696:6:HAL_TIM_PeriodElapsedCallback	24	static
 main.c:712:6:Error_Handler	4	static,ignoring_inline_asm

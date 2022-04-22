@@ -283,7 +283,7 @@ int main(void)
   UARTResetStart(&UART2);
 
 
-
+  enable_endeffector = 1;
 
   targectory_cal(paths, &path_n_cnt, 0, 180, 0.02);
 
@@ -293,6 +293,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
 
 	  moving_state_update();
 
@@ -1166,6 +1167,7 @@ void end_effector_update(){
 	if(enable_endeffector){
 		uint8_t temp = 0x45;
 		HAL_I2C_Master_Transmit(&hi2c1, end_effector_address << 1 , &temp, 1, 1000);
+		enable_endeffector = 0;
 	}
 
 }
